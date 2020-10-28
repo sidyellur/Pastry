@@ -186,3 +186,29 @@ Thread.Sleep 1000
 printfn "Network is now built"
 
 let actorsArray = actorMap |> Map.toSeq |> Seq.map fst |> Seq.toArray
+
+printfn "Processing requests" 
+
+let mutable k = 1
+let mutable destinationId = ""
+let mutable ctr = 0
+while k<=numRequest do
+    for sourceId in actorsArray do
+        ctr <- ctr + 1
+        destinationId <- sourceId
+        while destinationId = sourceId do
+            destinationId <-  actorsArray.[rand.Next actorsArray.Length]
+        let temp = actorMap.Item sourceId
+        temp<!Route(destinationId, sourceId, 0)
+        Thread.Sleep 5
+
+    printfn "Each peer performed %i requests" k
+    k<- k + 1
+
+
+Thread.Sleep 1000
+printfn "Requests Processed"
+let mutable totalHopSize: Double = 0.0
+printfn "Computing average hop size"
+
+let averageHop = actorHopsMap |> Map.toSeq |> Seq.map snd |> Seq.toArray
