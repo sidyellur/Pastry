@@ -1,10 +1,10 @@
-
 #r "nuget: Akka.FSharp"
 #r "nuget: Akka.TestKit"
 
 open Akka.Actor
 open Akka.FSharp
 open System
+open System.Threading
 
 type Message =
     |Initailize of String * int
@@ -16,7 +16,7 @@ type Message =
 let system = ActorSystem.Create("DOSProject3")
 let mutable actorMap : Map<String, IActorRef> = Map.empty 
 let mutable actorHopsMap: Map<String, Double list> = Map.empty
-
+let rand = Random()
 let clone i (arr:'T[,]) = arr.[i..i, *]|> Seq.cast<'T> |> Seq.toArray
 
 let Peer (mailBox:Actor<_>) = 
@@ -147,28 +147,42 @@ let Peer (mailBox:Actor<_>) =
 
 
 let args : string array = fsi.CommandLineArgs |> Array.tail
-let mutable numNodes =  args.[0] |> float
-let numRequest = args.[1] |> string
-let numDigits = Math.Log(numNodes, 16.0) |> ceil |> int
+let mutable numNodes =  args.[0] |> int
+let numRequest = args.[1] |> string |> int
+let numDigits = Math.Log(numNodes |> float, 16.0) |> ceil |> int
 let multiply text times = String.replicate times text
 printfn "Network construction initiated"
 let mutable nodeId = ""
 let mutable hexNum = ""
-let len = 0
-let mutable actor:IActorRef = null
+let mutable len = 0
+
 
 nodeId <- multiply "0" numDigits
-actor <- Peer |> spawn system "peer"
+let mutable actor = spawn system nodeId Peer
 actor <! Initailize(nodeId, numDigits)
+actorMap<- actorMap.Add(nodeId, actor)
+
+for i in [1.. numNodes-1] do
+    if i = numNodes / 4 then
+        printfn "The network is 25 percent done"
+    elif i = numNodes / 2 then
+        printfn "The network is 50 percent done"
+    elif i = numNodes*(3/4) then
+        printfn "The network is 75 percent done"
+
+    hexNum <- i.ToString("X")
+    len <- hexNum.Length
+    nodeId <-  multiply "0" (numDigits-len) + hexNum
+    actor<- spawn system nodeId Peer
+    actor <! Initailize(nodeId, numDigits)
+    actorMap<- actorMap.Add(nodeId, actor)
+    let temp = multiply "0" numDigits
+    let final = actorMap.Item temp
+    final<!Join(nodeId, 0)
+    Thread.Sleep 5
 
 
+Thread.Sleep 1000
+printfn "Network is now built"
 
-
-
-
-
-
-
-
-System.Console.ReadLine() |> ignore
-
+let actorsArray = actorMap |> Map.toSeq |> Seq.map fst |> Seq.toArray
