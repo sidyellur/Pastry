@@ -7,37 +7,35 @@ open System
 open System.Threading
 
 type Message =
-    |Initailize of String * int
+    |BuildNetwork of String * int
     |Route of String * String * int
     |Join of String*int
     |UpdateRoutingTable of String[]
-    |Print
+
 
 let system = ActorSystem.Create("DOSProject3")
+let rand = Random()
+
 let mutable actorMap : Map<String, IActorRef> = Map.empty 
 let mutable actorHopsMap: Map<String, Double list> = Map.empty
-let rand = Random()
+let mutable idleActorSet : Set<String> = Set.empty 
+
+
 let clone i (arr:'T[,]) = arr.[i..i, *]|> Seq.cast<'T> |> Seq.toArray
 
 let Peer (mailBox:Actor<_>) = 
-    let mutable id =""
-    let mutable rows = 0
+    let mutable id = String.Empty
+    let mutable rows = 0 
     let mutable cols = 16
-    let mutable prefix =""
-    let mutable suffix =""
     let mutable routingTable: string[,] = Array2D.zeroCreate 0 0
     let mutable commonPrefixLength=0
     let mutable currentRow=0
     let mutable leafSet : Set<String> = Set.empty
    
-    
-    
-
     let rec loop() = actor {
-            
         let! message = mailBox.Receive()
         match message with
-            | Initailize(i,d)->
+            | BuildNetwork(i,d)->
                 id <- i
                 rows <- d
                 routingTable <- Array2D.zeroCreate rows cols
@@ -45,26 +43,26 @@ let Peer (mailBox:Actor<_>) =
                 let mutable itr=0
                 let number = Int32.Parse(id, Globalization.NumberStyles.HexNumber)
 
-                let mutable left = number
-                let mutable right = number
+                let mutable neighbor1 = number
+                let mutable neighbor2 = number
                 
                 while itr<8 do 
-                    if left = 0 then
-                        left <- actorMap.Count-1 //check
-                    leafSet <- leafSet.Add(left.ToString())
+                    if neighbor1 = 0 then
+                        neighbor1 <- actorMap.Count-1 //check
+                    leafSet <- leafSet.Add(neighbor1.ToString())
                     itr <- itr + 1
-                    left <- left - 1
+                    neighbor1 <- neighbor1 - 1
                   
                 while itr < 16 do
-                    if right = actorMap.Count-1 then
-                      right <- 0
-                    leafSet <- leafSet.Add(right.ToString())
+                    if neighbor2 = actorMap.Count-1 then
+                      neighbor2 <- 0
+                    leafSet <- leafSet.Add(neighbor2.ToString())
                     itr <- itr + 1
-                    right <- right + 1
+                    neighbor2 <- neighbor2 + 1
             
             | Join(key, currentIndex) ->
                 let mutable i = 0
-                let mutable j = 0
+                // let mutable j = 0
                 let mutable k = currentIndex
 
                 while key.[i] = id.[i] do
@@ -97,7 +95,6 @@ let Peer (mailBox:Actor<_>) =
                         x<!Join(key, k)
                     | None ->printfn "Key does not exist in the map "
 
-
             | UpdateRoutingTable(row: String[])->
                 routingTable.[currentRow, *] <- row
                 currentRow <- currentRow + 1
@@ -124,7 +121,7 @@ let Peer (mailBox:Actor<_>) =
 
                 else
                     let mutable i = 0
-                    let mutable j = 0
+                    // let mutable j = 0
                     while key.[i] = id.[i] do
                         i<- i+1
                     commonPrefixLength <- i
@@ -135,20 +132,15 @@ let Peer (mailBox:Actor<_>) =
 
                     actorMap.Item(routingTable.[rtrow, rtcol]) <! Route(key, source, hops+1)
 
-            | Print ->
-                printfn "Routing table of node is %s \n%A" id routingTable    
-
-            | _-> return! loop()
         return! loop()
         }
     loop()
 
 
-
-
 let args : string array = fsi.CommandLineArgs |> Array.tail
 let mutable numNodes =  args.[0] |> int
 let numRequest = args.[1] |> string |> int
+let numFailures = args.[2] |> string |> int
 let numDigits = Math.Log(numNodes |> float, 16.0) |> ceil |> int
 let multiply text times = String.replicate times text
 printfn "Network construction initiated"
@@ -159,7 +151,7 @@ let mutable len = 0
 
 nodeId <- multiply "0" numDigits
 let mutable actor = spawn system nodeId Peer
-actor <! Initailize(nodeId, numDigits)
+actor <! BuildNetwork(nodeId, numDigits)
 actorMap<- actorMap.Add(nodeId, actor)
 
 for i in [1.. numNodes-1] do
@@ -174,7 +166,7 @@ for i in [1.. numNodes-1] do
     len <- hexNum.Length
     nodeId <-  multiply "0" (numDigits-len) + hexNum
     actor<- spawn system nodeId Peer
-    actor <! Initailize(nodeId, numDigits)
+    actor <! BuildNetwork(nodeId, numDigits)
     actorMap<- actorMap.Add(nodeId, actor)
     let temp = multiply "0" numDigits
     let final = actorMap.Item temp
@@ -186,7 +178,17 @@ Thread.Sleep 1000
 printfn "Network is now built"
 
 let actorsArray = actorMap |> Map.toSeq |> Seq.map fst |> Seq.toArray
+let mutable idlePeer = multiply "0" numDigits
+let mutable f = 0
+while f< numFailures do
+    while idlePeer = multiply "0" numDigits || idleActorSet.Contains(idlePeer) do
+        idlePeer <- actorsArray.[rand.Next actorsArray.Length]
+    Thread.Sleep(5)
+    idleActorSet <- idleActorSet.Add(idlePeer)
+    f<- f+1
 
+
+printfn "Failure peers are %d" idleActorSet.Count
 printfn "Processing requests" 
 
 let mutable k = 1
@@ -194,17 +196,16 @@ let mutable destinationId = ""
 let mutable ctr = 0
 while k<=numRequest do
     for sourceId in actorsArray do
-        ctr <- ctr + 1
-        destinationId <- sourceId
-        while destinationId = sourceId do
-            destinationId <-  actorsArray.[rand.Next actorsArray.Length]
-        let temp = actorMap.Item sourceId
-        temp<!Route(destinationId, sourceId, 0)
+        if not(idleActorSet.Contains(sourceId)) then
+            ctr <- ctr + 1
+            destinationId <- sourceId
+            while destinationId = sourceId || idleActorSet.Contains(destinationId) do
+                destinationId <-  actorsArray.[rand.Next actorsArray.Length]
+                let temp = actorMap.Item sourceId
+                temp<!Route(destinationId, sourceId, 0)
         Thread.Sleep 5
-
     printfn "Each peer performed %i requests" k
     k<- k + 1
-
 
 Thread.Sleep 1000
 printfn "Requests Processed"
@@ -218,5 +219,5 @@ for i in averageHop do
 
 
 printfn "Average Hop size %A" (totalHopSize/ (actorHopsMap.Count |> double))
-printfn "%A" actorHopsMap
+
 Environment.Exit 0
